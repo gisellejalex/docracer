@@ -210,10 +210,10 @@ function TypingDisplay({text,currentIndex,errors,skippedRanges,onSkipToLine,dark
     </div></div>);
 }
 
-function StatsBar({wpm,accuracy,elapsed,progress,skippedCount,showTime=true,T,zenMode=false}){
+function StatsBar({wpm,accuracy,elapsed,progress,skippedCount,T,zenMode=false}){
   const fmt=s=>`${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,"0")}`;
   const accColor = zenMode ? T.accent : (accuracy>=95?T.success:accuracy>=85?T.warn:T.error);
-  const stats = [{label:"WPM",value:wpm,color:T.accent},{label:"ACCURACY",value:`${accuracy}%`,color:accColor},...(showTime?[{label:"TIME",value:fmt(elapsed),color:"#c8f"}]:[]),{label:"PROGRESS",value:`${Math.round(progress*100)}%`,color:"#f90"},...(skippedCount>0?[{label:"SKIPPED",value:skippedCount,color:T.textMuted}]:[])];
+  const stats = [{label:"WPM",value:wpm,color:T.accent},{label:"ACCURACY",value:`${accuracy}%`,color:accColor},{label:"TIME",value:fmt(elapsed),color:"#c8f"},{label:"PROGRESS",value:`${Math.round(progress*100)}%`,color:"#f90"},...(skippedCount>0?[{label:"SKIPPED",value:skippedCount,color:T.textMuted}]:[])];
   return(<div style={{display:"flex",gap:20,justifyContent:"center",flexWrap:"wrap",padding:"12px 0"}}>
     {stats.map(s=>
       <div key={s.label} style={{textAlign:"center",minWidth:68}}><div style={{fontSize:10,letterSpacing:2,color:T.textMuted,fontWeight:600,marginBottom:3}}>{s.label}</div>
@@ -495,7 +495,7 @@ export default function DocRacer() {
   const [quizResults, setQuizResults] = useState([]);
 
   // Settings
-  const [showTime, setShowTime] = useState(true);
+  const [focusMode, setFocusMode] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
   const [zenMode, setZenMode] = useState(false); // hides red error highlights
 
@@ -508,14 +508,14 @@ export default function DocRacer() {
     (async () => {
       try {
         const r = await window.storage.get("docracer-settings");
-        if (r) { const s = JSON.parse(r.value); if (s.showTime !== undefined) setShowTime(s.showTime); if (s.darkMode !== undefined) setDarkMode(s.darkMode); if (s.zenMode !== undefined) setZenMode(s.zenMode); }
+        if (r) { const s = JSON.parse(r.value); if (s.focusMode !== undefined) setFocusMode(s.focusMode); if (s.darkMode !== undefined) setDarkMode(s.darkMode); if (s.zenMode !== undefined) setZenMode(s.zenMode); }
       } catch {}
     })();
   }, []);
-  const saveSettings = async (st, dm, zm) => { try { await window.storage.set("docracer-settings", JSON.stringify({ showTime: st, darkMode: dm, zenMode: zm })); } catch {} };
-  const toggleShowTime = () => { const v = !showTime; setShowTime(v); saveSettings(v, darkMode, zenMode); };
-  const toggleDarkMode = () => { const v = !darkMode; setDarkMode(v); saveSettings(showTime, v, zenMode); };
-  const toggleZenMode = () => { const v = !zenMode; setZenMode(v); saveSettings(showTime, darkMode, v); };
+  const saveSettings = async (fm, dm, zm) => { try { await window.storage.set("docracer-settings", JSON.stringify({ focusMode: fm, darkMode: dm, zenMode: zm })); } catch {} };
+  const toggleFocusMode = () => { const v = !focusMode; setFocusMode(v); saveSettings(v, darkMode, zenMode); };
+  const toggleDarkMode = () => { const v = !darkMode; setDarkMode(v); saveSettings(focusMode, v, zenMode); };
+  const toggleZenMode = () => { const v = !zenMode; setZenMode(v); saveSettings(focusMode, darkMode, v); };
 
   // Theme
   const T = darkMode ? {
@@ -699,14 +699,14 @@ export default function DocRacer() {
         <div style={{ fontSize: 11, letterSpacing: 4, color: T.textDim, marginTop: 2 }}>TYPE • LEARN • QUIZ • MASTER</div>
         {/* Settings bar */}
         <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 10 }}>
-          <button onClick={toggleShowTime} style={{
+          <button onClick={toggleFocusMode} style={{
             padding: "4px 12px", fontSize: 11, fontWeight: 600, letterSpacing: 1,
-            background: showTime ? `${T.accent}18` : "transparent",
-            color: showTime ? T.accent : T.textMuted,
-            border: `1px solid ${showTime ? `${T.accent}44` : `${T.textMuted}33`}`,
+            background: focusMode ? `${T.accent}18` : "transparent",
+            color: focusMode ? T.accent : T.textMuted,
+            border: `1px solid ${focusMode ? `${T.accent}44` : `${T.textMuted}33`}`,
             borderRadius: 20, cursor: "pointer", fontFamily: "'JetBrains Mono',monospace", transition: "all 0.2s",
           }}>
-            {showTime ? "⏱ TIME ON" : "⏱ TIME OFF"}
+            {focusMode ? "🎯 FOCUS ON" : "🎯 FOCUS OFF"}
           </button>
           <button onClick={toggleDarkMode} style={{
             padding: "4px 12px", fontSize: 11, fontWeight: 600, letterSpacing: 1,
@@ -749,7 +749,7 @@ export default function DocRacer() {
             </button>
           </div>
           <Racetrack progress={progress} nitroActive={nitroActive} />
-          <StatsBar wpm={wpm} accuracy={accuracy} elapsed={elapsed} progress={progress} skippedCount={totalSkipped} showTime={showTime} T={T} zenMode={zenMode} />
+          {!focusMode && <StatsBar wpm={wpm} accuracy={accuracy} elapsed={elapsed} progress={progress} skippedCount={totalSkipped} T={T} zenMode={zenMode} />}
           <TypingDisplay text={raceText} currentIndex={charIndex} errors={errors} skippedRanges={skippedRanges} onSkipToLine={handleSkipTo} darkMode={darkMode} zenMode={zenMode} />
           {nitroActive && !paused && <div style={{ textAlign: "center", marginTop: 8, fontSize: 12, color: "#f0f", letterSpacing: 4, fontWeight: 700, textShadow: "0 0 10px #f0f", animation: "pulse 0.5s infinite" }}>⚡ NITRO ACTIVE ⚡</div>}
           <div style={{ textAlign: "center", marginTop: 10, fontSize: 12, color: "rgba(180,190,210,0.25)" }}>
