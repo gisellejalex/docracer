@@ -184,7 +184,7 @@ function Racetrack({progress,nitroActive}){
     </div><div style={{position:"absolute",right:16,top:8,fontSize:20,opacity:0.5}}>🏁</div></div>);
 }
 
-function TypingDisplay({text,currentIndex,errors,skippedRanges,onSkipToLine}){
+function TypingDisplay({text,currentIndex,errors,skippedRanges,onSkipToLine,darkMode=true}){
   const containerRef=useRef(null),cursorRef=useRef(null);
   const[hoveredLine,setHoveredLine]=useState(-1),[confirmLine,setConfirmLine]=useState(-1);
   const lines=textToLines(text);
@@ -193,7 +193,7 @@ function TypingDisplay({text,currentIndex,errors,skippedRanges,onSkipToLine}){
   const isSkipped=(idx)=>{for(const r of skippedRanges)if(idx>=r.start&&idx<r.end)return true;return false;};
   const handleLineClick=(li,e)=>{e.stopPropagation();const line=lines[li];if(line.start<=currentIndex)return;if(confirmLine===li){onSkipToLine(line.start);setConfirmLine(-1);}else setConfirmLine(li);};
   return(<div style={{position:"relative"}}>
-    <div ref={containerRef} style={{fontFamily:"'JetBrains Mono','Fira Code',monospace",fontSize:17,lineHeight:2.1,padding:"20px 24px 20px 44px",background:"rgba(0,0,0,0.5)",border:"1px solid rgba(0,255,255,0.12)",borderRadius:12,height:260,overflowY:"auto",overflowX:"hidden",wordBreak:"break-word",whiteSpace:"pre-wrap",scrollBehavior:"smooth",position:"relative"}}>
+    <div ref={containerRef} style={{fontFamily:"'JetBrains Mono','Fira Code',monospace",fontSize:17,lineHeight:2.1,padding:"20px 24px 20px 44px",background:darkMode?"rgba(0,0,0,0.5)":"rgba(255,255,255,0.7)",border:`1px solid ${darkMode?"rgba(0,255,255,0.12)":"rgba(0,120,140,0.2)"}`,borderRadius:12,height:260,overflowY:"auto",overflowX:"hidden",wordBreak:"break-word",whiteSpace:"pre-wrap",scrollBehavior:"smooth",position:"relative"}}>
       {lines.map((line,li)=>{const lc=text.slice(line.start,line.end),isAhead=line.start>currentIndex,isH=hoveredLine===li&&isAhead,isC=confirmLine===li,isCur=currentIndex>=line.start&&currentIndex<line.end;
         return(<div key={li} onClick={e=>handleLineClick(li,e)} onMouseEnter={()=>isAhead&&setHoveredLine(li)} onMouseLeave={()=>setHoveredLine(-1)}
           style={{position:"relative",cursor:isAhead?"pointer":"default",background:isC?"rgba(255,0,255,0.08)":isH?"rgba(0,255,255,0.04)":"transparent",borderRadius:4,margin:"0 -8px",padding:"0 8px",transition:"background 0.15s",borderLeft:isCur?"3px solid #0ff":"3px solid transparent",paddingLeft:isCur?5:8}}>
@@ -210,11 +210,12 @@ function TypingDisplay({text,currentIndex,errors,skippedRanges,onSkipToLine}){
     </div></div>);
 }
 
-function StatsBar({wpm,accuracy,elapsed,progress,skippedCount}){
+function StatsBar({wpm,accuracy,elapsed,progress,skippedCount,showTime=true,T}){
   const fmt=s=>`${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,"0")}`;
+  const stats = [{label:"WPM",value:wpm,color:T.accent},{label:"ACCURACY",value:`${accuracy}%`,color:accuracy>=95?T.success:accuracy>=85?T.warn:T.error},...(showTime?[{label:"TIME",value:fmt(elapsed),color:"#c8f"}]:[]),{label:"PROGRESS",value:`${Math.round(progress*100)}%`,color:"#f90"},...(skippedCount>0?[{label:"SKIPPED",value:skippedCount,color:T.textMuted}]:[])];
   return(<div style={{display:"flex",gap:20,justifyContent:"center",flexWrap:"wrap",padding:"12px 0"}}>
-    {[{label:"WPM",value:wpm,color:"#0ff"},{label:"ACCURACY",value:`${accuracy}%`,color:accuracy>=95?"#0f6":accuracy>=85?"#ff0":"#f36"},{label:"TIME",value:fmt(elapsed),color:"#c8f"},{label:"PROGRESS",value:`${Math.round(progress*100)}%`,color:"#f90"},...(skippedCount>0?[{label:"SKIPPED",value:skippedCount,color:"rgba(180,190,210,0.4)"}]:[])].map(s=>
-      <div key={s.label} style={{textAlign:"center",minWidth:68}}><div style={{fontSize:10,letterSpacing:2,color:"rgba(180,190,210,0.5)",fontWeight:600,marginBottom:3}}>{s.label}</div>
+    {stats.map(s=>
+      <div key={s.label} style={{textAlign:"center",minWidth:68}}><div style={{fontSize:10,letterSpacing:2,color:T.textMuted,fontWeight:600,marginBottom:3}}>{s.label}</div>
       <div style={{fontSize:24,fontWeight:800,color:s.color,textShadow:`0 0 12px ${s.color}44`,fontFamily:"'Orbitron',sans-serif"}}>{s.value}</div></div>)}
   </div>);
 }
@@ -492,9 +493,51 @@ export default function DocRacer() {
   const [quizQuestions, setQuizQuestions] = useState([]);
   const [quizResults, setQuizResults] = useState([]);
 
+  // Settings
+  const [showTime, setShowTime] = useState(true);
+  const [darkMode, setDarkMode] = useState(true);
+
   const inputRef = useRef(null);
   const timerRef = useRef(null);
   const pausedTimeRef = useRef(0);
+
+  // Load settings from storage
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await window.storage.get("docracer-settings");
+        if (r) { const s = JSON.parse(r.value); if (s.showTime !== undefined) setShowTime(s.showTime); if (s.darkMode !== undefined) setDarkMode(s.darkMode); }
+      } catch {}
+    })();
+  }, []);
+  const saveSettings = async (st, dm) => { try { await window.storage.set("docracer-settings", JSON.stringify({ showTime: st, darkMode: dm })); } catch {} };
+  const toggleShowTime = () => { const v = !showTime; setShowTime(v); saveSettings(v, darkMode); };
+  const toggleDarkMode = () => { const v = !darkMode; setDarkMode(v); saveSettings(showTime, v); };
+
+  // Theme
+  const T = darkMode ? {
+    bg: "linear-gradient(160deg,#08080f 0%,#0a0e1a 40%,#0d0a18 100%)",
+    text: "#e0e8f0", textMuted: "rgba(180,190,210,0.35)", textDim: "rgba(180,190,210,0.25)",
+    accent: "#0ff", accent2: "#f0f", accentGlow: "rgba(0,255,255,0.4)",
+    cardBg: "rgba(0,255,255,0.03)", cardBorder: "rgba(0,255,255,0.1)", cardHoverBorder: "rgba(0,255,255,0.35)", cardHoverBg: "rgba(0,255,255,0.06)",
+    inputBg: "rgba(0,0,0,0.5)", inputBorder: "rgba(0,255,255,0.12)",
+    overlayBg: "rgba(8,8,15,0.88)",
+    success: "#0f6", error: "#f36", warn: "#ff0",
+    trackBg: "linear-gradient(90deg,rgba(0,255,255,0.04),rgba(255,0,255,0.06))", trackBorder: "rgba(0,255,255,0.15)",
+    scrollThumb: "rgba(0,255,255,0.15)",
+    btnBg: "#333", btnBg2: "#222",
+  } : {
+    bg: "linear-gradient(160deg,#f5f7fa 0%,#e8ecf1 40%,#f0f2f5 100%)",
+    text: "#1a2030", textMuted: "rgba(30,40,60,0.4)", textDim: "rgba(30,40,60,0.3)",
+    accent: "#0099aa", accent2: "#aa0088", accentGlow: "rgba(0,153,170,0.3)",
+    cardBg: "rgba(0,120,140,0.04)", cardBorder: "rgba(0,120,140,0.15)", cardHoverBorder: "rgba(0,120,140,0.4)", cardHoverBg: "rgba(0,120,140,0.08)",
+    inputBg: "rgba(255,255,255,0.7)", inputBorder: "rgba(0,120,140,0.2)",
+    overlayBg: "rgba(245,247,250,0.92)",
+    success: "#0a8", error: "#d44", warn: "#b80",
+    trackBg: "linear-gradient(90deg,rgba(0,120,140,0.06),rgba(170,0,136,0.06))", trackBorder: "rgba(0,120,140,0.2)",
+    scrollThumb: "rgba(0,120,140,0.15)",
+    btnBg: "#ddd", btnBg2: "#eee",
+  };
 
   useEffect(() => { loadLibrary().then(lib => { setLibrary(lib); setLoading(false); }); }, []);
 
@@ -635,15 +678,43 @@ export default function DocRacer() {
 
   const progress = raceText.length > 0 ? charIndex / raceText.length : 0;
 
-  if (loading) return (<div style={{ ...rootStyle, display: "flex", alignItems: "center", justifyContent: "center" }}><div style={{ color: "#0ff", fontFamily: "'Orbitron',sans-serif", fontSize: 18, animation: "pulse 1.5s infinite" }}>LOADING…</div></div>);
+  if (loading) return (<div style={{ minHeight:"100vh",background:darkMode?"linear-gradient(160deg,#08080f 0%,#0a0e1a 40%,#0d0a18 100%)":"linear-gradient(160deg,#f5f7fa 0%,#e8ecf1 40%,#f0f2f5 100%)", display: "flex", alignItems: "center", justifyContent: "center" }}><div style={{ color: "#0ff", fontFamily: "'Orbitron',sans-serif", fontSize: 18, animation: "pulse 1.5s infinite" }}>LOADING…</div></div>);
+
+  const currentRootStyle = {
+    minHeight: "100vh", background: T.bg, color: T.text,
+    fontFamily: "'JetBrains Mono',monospace", padding: "0 20px 40px",
+    maxWidth: 800, margin: "0 auto", position: "relative", overflow: "hidden",
+    transition: "background 0.4s, color 0.4s",
+  };
 
   return (
-    <div style={rootStyle} onClick={() => { if (screen === "race") inputRef.current?.focus(); }}>
+    <div style={currentRootStyle} onClick={() => { if (screen === "race") inputRef.current?.focus(); }}>
       <input ref={inputRef} style={{ position: "absolute", opacity: 0, pointerEvents: "none" }} autoFocus={screen === "race"} />
 
       <div style={{ textAlign: "center", padding: "18px 0 8px" }}>
-        <div style={{ fontSize: 32, fontWeight: 900, fontFamily: "'Orbitron',sans-serif", background: "linear-gradient(90deg,#0ff,#f0f,#0ff)", backgroundSize: "200% 100%", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", animation: "shimmer 3s linear infinite", letterSpacing: 4 }}>DOCRACER</div>
-        <div style={{ fontSize: 11, letterSpacing: 4, color: "rgba(180,190,210,0.3)", marginTop: 2 }}>TYPE • LEARN • QUIZ • MASTER</div>
+        <div style={{ fontSize: 32, fontWeight: 900, fontFamily: "'Orbitron',sans-serif", background: `linear-gradient(90deg,${T.accent},${T.accent2},${T.accent})`, backgroundSize: "200% 100%", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", animation: "shimmer 3s linear infinite", letterSpacing: 4 }}>DOCRACER</div>
+        <div style={{ fontSize: 11, letterSpacing: 4, color: T.textDim, marginTop: 2 }}>TYPE • LEARN • QUIZ • MASTER</div>
+        {/* Settings bar */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 10 }}>
+          <button onClick={toggleShowTime} style={{
+            padding: "4px 12px", fontSize: 11, fontWeight: 600, letterSpacing: 1,
+            background: showTime ? `${T.accent}18` : "transparent",
+            color: showTime ? T.accent : T.textMuted,
+            border: `1px solid ${showTime ? `${T.accent}44` : `${T.textMuted}33`}`,
+            borderRadius: 20, cursor: "pointer", fontFamily: "'JetBrains Mono',monospace", transition: "all 0.2s",
+          }}>
+            {showTime ? "⏱ TIME ON" : "⏱ TIME OFF"}
+          </button>
+          <button onClick={toggleDarkMode} style={{
+            padding: "4px 12px", fontSize: 11, fontWeight: 600, letterSpacing: 1,
+            background: "transparent",
+            color: T.textMuted,
+            border: `1px solid ${T.textMuted}33`,
+            borderRadius: 20, cursor: "pointer", fontFamily: "'JetBrains Mono',monospace", transition: "all 0.2s",
+          }}>
+            {darkMode ? "🌙 DARK" : "☀️ LIGHT"}
+          </button>
+        </div>
       </div>
 
       {screen === "library" && <Library library={library} onSelect={handleSelectDoc} onUpload={handleUpload} uploading={uploading} uploadError={uploadError} onDelete={handleDelete} />}
@@ -666,8 +737,8 @@ export default function DocRacer() {
             </button>
           </div>
           <Racetrack progress={progress} nitroActive={nitroActive} />
-          <StatsBar wpm={wpm} accuracy={accuracy} elapsed={elapsed} progress={progress} skippedCount={totalSkipped} />
-          <TypingDisplay text={raceText} currentIndex={charIndex} errors={errors} skippedRanges={skippedRanges} onSkipToLine={handleSkipTo} />
+          <StatsBar wpm={wpm} accuracy={accuracy} elapsed={elapsed} progress={progress} skippedCount={totalSkipped} showTime={showTime} T={T} />
+          <TypingDisplay text={raceText} currentIndex={charIndex} errors={errors} skippedRanges={skippedRanges} onSkipToLine={handleSkipTo} darkMode={darkMode} />
           {nitroActive && !paused && <div style={{ textAlign: "center", marginTop: 8, fontSize: 12, color: "#f0f", letterSpacing: 4, fontWeight: 700, textShadow: "0 0 10px #f0f", animation: "pulse 0.5s infinite" }}>⚡ NITRO ACTIVE ⚡</div>}
           <div style={{ textAlign: "center", marginTop: 10, fontSize: 12, color: "rgba(180,190,210,0.25)" }}>
             {isReviewRace ? "Review Race" : `Section ${currentChunkIdx + 1} of ${currentDoc?.totalChunks || 1}`} • Click anywhere to focus
@@ -705,16 +776,8 @@ export default function DocRacer() {
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
         @keyframes countPulse{0%{transform:scale(1)}50%{transform:scale(1.15)}100%{transform:scale(1)}}
         *{box-sizing:border-box}
-        ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(0,255,255,0.15);border-radius:3px}
+        ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:${T.scrollThumb};border-radius:3px}
       `}</style>
     </div>
   );
 }
-
-const rootStyle = {
-  minHeight: "100vh",
-  background: "linear-gradient(160deg,#08080f 0%,#0a0e1a 40%,#0d0a18 100%)",
-  color: "#e0e8f0", fontFamily: "'JetBrains Mono',monospace",
-  padding: "0 20px 40px", maxWidth: 800, margin: "0 auto",
-  position: "relative", overflow: "hidden",
-};
