@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import JSZip from "jszip";
 
 // ─── CONSTANTS ───
 const CHUNK_SIZE = 5;
@@ -6,84 +7,141 @@ const CHARS_PER_PAGE = 2000;
 const NITRO_STREAK = 10;
 const LINE_CHAR_WIDTH = 52;
 
+// ─── Load PDF.js from CDN ───
+let pdfjsReady = null;
+function loadPdfJs() {
+  if (pdfjsReady) return pdfjsReady;
+  pdfjsReady = new Promise((resolve, reject) => {
+    if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
+    script.type = "module";
+    // Use classic script tag approach for broader compat
+    const s2 = document.createElement("script");
+    s2.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.js";
+    s2.onload = () => {
+      const lib = window.pdfjsLib;
+      if (lib) {
+        lib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.js";
+        resolve(lib);
+      } else { reject(new Error("PDF.js failed to load")); }
+    };
+    s2.onerror = () => reject(new Error("Could not load PDF.js from CDN"));
+    document.head.appendChild(s2);
+  });
+  return pdfjsReady;
+}
+
 // ─── UTILITY: Parse uploaded files ───
 
 async function parseDocx(arrayBuffer) {
-  const bytes = new Uint8Array(arrayBuffer);
-  let eocdOffset = -1;
-  for (let i = bytes.length - 22; i >= 0; i--) {
-    if (bytes[i] === 0x50 && bytes[i+1] === 0x4B && bytes[i+2] === 0x05 && bytes[i+3] === 0x06) { eocdOffset = i; break; }
-  }
-  if (eocdOffset === -1) throw new Error("Invalid DOCX file.");
-  let offset = 0;
-  let docXml = null;
-  while (offset < bytes.length - 30) {
-    if (bytes[offset] !== 0x50 || bytes[offset+1] !== 0x4B || bytes[offset+2] !== 0x03 || bytes[offset+3] !== 0x04) break;
-    const compressionMethod = bytes[offset+8] | (bytes[offset+9] << 8);
-    const compressedSize = bytes[offset+18] | (bytes[offset+19] << 8) | (bytes[offset+20] << 16) | (bytes[offset+21] << 24);
-    const fileNameLen = bytes[offset+26] | (bytes[offset+27] << 8);
-    const extraLen = bytes[offset+28] | (bytes[offset+29] << 8);
-    const fileName = new TextDecoder().decode(bytes.slice(offset+30, offset+30+fileNameLen));
-    const dataStart = offset + 30 + fileNameLen + extraLen;
-    const dataBytes = bytes.slice(dataStart, dataStart + compressedSize);
-    if (fileName === "word/document.xml") {
-      if (compressionMethod === 0) {
-        docXml = new TextDecoder().decode(dataBytes);
-      } else if (compressionMethod === 8) {
-        try {
-          const ds = new DecompressionStream("deflate-raw");
-          const writer = ds.writable.getWriter();
-          writer.write(dataBytes); writer.close();
-          const reader = ds.readable.getReader();
-          const chunks = [];
-          while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
-          const totalLen = chunks.reduce((s, c) => s + c.length, 0);
-          const result = new Uint8Array(totalLen);
-          let pos = 0;
-          for (const c of chunks) { result.set(c, pos); pos += c.length; }
-          docXml = new TextDecoder().decode(result);
-        } catch { throw new Error("Could not decompress DOCX. Try saving as .txt first."); }
-      }
-      break;
-    }
-    offset = dataStart + compressedSize;
-  }
-  if (!docXml) throw new Error("Invalid DOCX — no document.xml found.");
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  const docFile = zip.file("word/document.xml");
+  if (!docFile) throw new Error("Invalid DOCX — no document.xml found.");
+  const docXml = await docFile.async("string");
   return docXml
-    .replace(/<w:p[^>]*\/>/g, "\n").replace(/<w:p[ >]/g, "\n<w:p ")
-    .replace(/<w:tab\/>/g, " ").replace(/<w:br[^>]*\/>/g, "\n")
+    .replace(/<w:p[^>]*\/>/g, "\n")
+    .replace(/<w:p[ >]/g, "\n<w:p ")
+    .replace(/<w:tab\/>/g, " ")
+    .replace(/<w:br[^>]*\/>/g, "\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
-    .replace(/\n{3,}/g, "\n\n").trim();
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 async function parsePdf(arrayBuffer) {
-  const bytes = new Uint8Array(arrayBuffer);
-  let raw = "";
-  for (let i = 0; i < bytes.length; i++) raw += String.fromCharCode(bytes[i]);
+  const pdfjsLib = await loadPdfJs();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const textParts = [];
-  const btRegex = /BT\s([\s\S]*?)ET/g;
-  let match;
-  while ((match = btRegex.exec(raw)) !== null) {
-    const block = match[1];
-    const strRegex = /\(([^)]*)\)/g;
-    let sm;
-    while ((sm = strRegex.exec(block)) !== null) {
-      textParts.push(sm[1].replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t")
-        .replace(/\\\(/g, "(").replace(/\\\)/g, ")").replace(/\\\\/g, "\\"));
-    }
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map((item) => item.str).join(" ");
+    textParts.push(pageText);
   }
-  if (textParts.length === 0) throw new Error("Could not extract text from this PDF. Try TXT or DOCX instead.");
-  return textParts.join(" ").replace(/\s+/g, " ").trim();
+  const text = textParts.join("\n\n").replace(/\s+/g, " ").trim();
+  if (!text || text.length < 10) throw new Error("Could not extract text from this PDF. It may be scanned/image-based.");
+  return text;
+}
+
+function parseRtf(text) {
+  // Strip RTF control words and groups, extract plain text
+  let result = text
+    .replace(/\{\\pict[\s\S]*?\\blipuid\s[\da-fA-F]+\}?/g, "") // remove images
+    .replace(/\\par[d]?/g, "\n") // paragraph breaks
+    .replace(/\\tab/g, " ") // tabs
+    .replace(/\\line/g, "\n") // line breaks
+    .replace(/\\'([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))) // hex chars
+    .replace(/\\[a-z]+\d*\s?/gi, "") // control words
+    .replace(/[{}]/g, "") // braces
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return result;
+}
+
+function parseHtml(text) {
+  // Strip HTML tags, decode entities, keep text
+  const doc = new DOMParser().parseFromString(text, "text/html");
+  return (doc.body.textContent || doc.body.innerText || "").replace(/\s+/g, " ").trim();
 }
 
 async function extractText(file) {
-  const ext = file.name.split(".").pop().toLowerCase();
-  if (ext === "txt" || ext === "md") return await file.text();
-  if (ext === "docx") return await parseDocx(await file.arrayBuffer());
-  if (ext === "pdf") return await parsePdf(await file.arrayBuffer());
-  throw new Error("Unsupported file type. Use .txt, .docx, or .pdf");
+  const name = file.name.toLowerCase();
+  const ext = name.split(".").pop();
+
+  // Plain text formats
+  if (["txt", "md", "csv", "tsv", "log", "json", "xml", "yml", "yaml", "ini", "cfg"].includes(ext)) {
+    return await file.text();
+  }
+
+  // DOCX
+  if (ext === "docx") {
+    return await parseDocx(await file.arrayBuffer());
+  }
+
+  // PDF
+  if (ext === "pdf") {
+    return await parsePdf(await file.arrayBuffer());
+  }
+
+  // RTF
+  if (ext === "rtf") {
+    const raw = await file.text();
+    return parseRtf(raw);
+  }
+
+  // HTML / HTM
+  if (ext === "html" || ext === "htm") {
+    const raw = await file.text();
+    return parseHtml(raw);
+  }
+
+  // DOC (old Word format) — limited extraction
+  if (ext === "doc") {
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let text = "";
+    for (let i = 0; i < bytes.length; i++) {
+      const c = bytes[i];
+      if (c >= 32 && c < 127) text += String.fromCharCode(c);
+      else if (c === 13 || c === 10) text += "\n";
+      else text += " ";
+    }
+    // Clean up: collapse whitespace, remove junk runs
+    text = text.replace(/[^\S\n]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    // Filter out lines that look like binary junk (lots of special chars)
+    const lines = text.split("\n").filter(line => {
+      const printable = line.replace(/[^a-zA-Z0-9 .,;:!?'"()\-]/g, "");
+      return printable.length > line.length * 0.5;
+    });
+    text = lines.join("\n").trim();
+    if (text.length < 20) throw new Error("Could not extract text from this .doc file. Try saving as .docx or .txt first.");
+    return text;
+  }
+
+  throw new Error(`Unsupported file type: .${ext}. Supported: PDF, DOCX, DOC, TXT, RTF, HTML, MD, CSV, and more.`);
 }
 
 function chunkText(text, chunkCharSize) {
@@ -387,7 +445,7 @@ function Library({ library, onSelect, onUpload, uploading, uploadError, onDelete
         </div>
         <label style={{ ...btnStyle("rgba(0,255,255,0.1)", "#0ff"), display: "inline-flex", alignItems: "center", gap: 8, position: "relative" }}>
           {uploading ? "Processing…" : "＋ Upload Document"}
-          <input type="file" accept=".txt,.md,.docx,.pdf" onChange={onUpload} disabled={uploading}
+          <input type="file" accept=".txt,.md,.docx,.doc,.pdf,.rtf,.html,.htm,.csv,.tsv,.log,.json,.xml,.yml,.yaml" onChange={onUpload} disabled={uploading}
             style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} />
         </label>
       </div>
@@ -396,7 +454,7 @@ function Library({ library, onSelect, onUpload, uploading, uploadError, onDelete
         <div style={{ textAlign: "center", padding: "60px 20px" }}>
           <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }}>📄</div>
           <div style={{ color: "rgba(180,190,210,0.4)", fontSize: 15, maxWidth: 380, margin: "0 auto", lineHeight: 1.7 }}>
-            Upload a document to start learning.<br />Supports TXT, DOCX, and PDF up to 50 pages.<br />
+            Upload a document to start learning.<br />Supports PDF, DOCX, DOC, RTF, TXT, HTML, MD, CSV, and more — up to 50 pages.<br />
             <span style={{ color: "rgba(0,255,255,0.3)", fontSize: 12 }}>Tip: Click any line ahead to skip sections you already know!</span>
           </div>
         </div>
