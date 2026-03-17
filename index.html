@@ -9,6 +9,17 @@
       * { margin: 0; padding: 0; }
       body { background: #08080f; }
     </style>
+    <script>
+      // Storage polyfill - must run before React app loads
+      if (!window.storage || typeof window.storage.get !== 'function') {
+        window.storage = {
+          get: function(k) { try { var v = localStorage.getItem('docracer:'+k); return Promise.resolve(v !== null ? {key:k, value:v, shared:false} : null); } catch(e) { return Promise.resolve(null); } },
+          set: function(k,v) { try { localStorage.setItem('docracer:'+k, v); return Promise.resolve({key:k, value:v, shared:false}); } catch(e) { return Promise.resolve(null); } },
+          delete: function(k) { try { localStorage.removeItem('docracer:'+k); return Promise.resolve({key:k, deleted:true, shared:false}); } catch(e) { return Promise.resolve(null); } },
+          list: function(p) { p=p||''; try { var keys=[]; for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k.indexOf('docracer:'+p)===0)keys.push(k.replace('docracer:',''));} return Promise.resolve({keys:keys,prefix:p,shared:false}); } catch(e) { return Promise.resolve({keys:[],prefix:p,shared:false}); } }
+        };
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

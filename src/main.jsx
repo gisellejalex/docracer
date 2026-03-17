@@ -1,37 +1,52 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import DocRacer from './DocRacer.jsx'
 
-// Polyfill window.storage for local dev (uses localStorage)
-if (!window.storage) {
+// Polyfill window.storage for deployment outside Claude (uses localStorage)
+// Must run BEFORE DocRacer imports
+if (!window.storage || typeof window.storage.get !== 'function') {
   window.storage = {
     async get(key) {
-      const val = localStorage.getItem(`docracer:${key}`);
-      return val !== null ? { key, value: val, shared: false } : null;
+      try {
+        const val = localStorage.getItem(`docracer:${key}`);
+        return val !== null ? { key, value: val, shared: false } : null;
+      } catch { return null; }
     },
     async set(key, value) {
-      localStorage.setItem(`docracer:${key}`, value);
-      return { key, value, shared: false };
+      try {
+        localStorage.setItem(`docracer:${key}`, value);
+        return { key, value, shared: false };
+      } catch { return null; }
     },
     async delete(key) {
-      localStorage.removeItem(`docracer:${key}`);
-      return { key, deleted: true, shared: false };
+      try {
+        localStorage.removeItem(`docracer:${key}`);
+        return { key, deleted: true, shared: false };
+      } catch { return null; }
     },
     async list(prefix = '') {
-      const keys = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k.startsWith(`docracer:${prefix}`)) {
-          keys.push(k.replace('docracer:', ''));
+      try {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k.startsWith(`docracer:${prefix}`)) {
+            keys.push(k.replace('docracer:', ''));
+          }
         }
-      }
-      return { keys, prefix, shared: false };
+        return { keys, prefix, shared: false };
+      } catch { return { keys: [], prefix, shared: false }; }
     },
   };
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <DocRacer />
-  </React.StrictMode>,
-)
+import DocRacer from './DocRacer.jsx'
+
+const root = document.getElementById('root');
+if (root) {
+  ReactDOM.createRoot(root).render(
+    <React.StrictMode>
+      <DocRacer />
+    </React.StrictMode>,
+  );
+} else {
+  console.error('DocRacer: #root element not found');
+}
