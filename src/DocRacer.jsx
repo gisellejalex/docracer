@@ -572,16 +572,18 @@ export default function DocRacer() {
   const [raceFinished, setRaceFinished] = useState(false);
   const [skippedRanges, setSkippedRanges] = useState([]);
   const [totalSkipped, setTotalSkipped] = useState(0);
+  const [paused, setPaused] = useState(false);
 
   const inputRef = useRef(null);
   const timerRef = useRef(null);
+  const pausedTimeRef = useRef(0); // total ms spent paused
 
   useEffect(() => { loadLibrary().then((lib) => { setLibrary(lib); setLoading(false); }); }, []);
 
   useEffect(() => {
-    if (screen === "race" && startTime && !raceFinished) {
+    if (screen === "race" && startTime && !raceFinished && !paused) {
       timerRef.current = setInterval(() => {
-        const secs = (Date.now() - startTime) / 1000;
+        const secs = (Date.now() - startTime - pausedTimeRef.current) / 1000;
         setElapsed(secs);
         if (secs > 0) {
           const typedChars = charIndex - totalSkipped;
@@ -590,7 +592,7 @@ export default function DocRacer() {
       }, 200);
       return () => clearInterval(timerRef.current);
     }
-  }, [screen, startTime, raceFinished, charIndex, totalSkipped]);
+  }, [screen, startTime, raceFinished, charIndex, totalSkipped, paused]);
 
   useEffect(() => {
     if (charIndex > 0) {
@@ -652,8 +654,30 @@ export default function DocRacer() {
     setStartTime(null); setElapsed(0); setWpm(0); setAccuracy(100);
     setStreak(0); setNitroActive(false); setRaceFinished(false);
     setSkippedRanges([]); setTotalSkipped(0);
+    setPaused(false); pausedTimeRef.current = 0;
     setScreen("countdown");
   };
+
+  const pauseStartRef = useRef(null);
+
+  const togglePause = useCallback(() => {
+    if (raceFinished) return;
+    setPaused((prev) => {
+      if (!prev) {
+        // Pausing
+        pauseStartRef.current = Date.now();
+        clearInterval(timerRef.current);
+      } else {
+        // Resuming
+        if (pauseStartRef.current) {
+          pausedTimeRef.current += Date.now() - pauseStartRef.current;
+          pauseStartRef.current = null;
+        }
+        setTimeout(() => inputRef.current?.focus(), 50);
+      }
+      return !prev;
+    });
+  }, [raceFinished]);
 
   const handleSkipTo = (targetIdx) => {
     if (targetIdx <= charIndex || raceFinished) return;
@@ -668,6 +692,10 @@ export default function DocRacer() {
 
   const handleKeyDown = useCallback((e) => {
     if (screen !== "race" || raceFinished) return;
+    // Escape toggles pause
+    if (e.key === "Escape") { e.preventDefault(); togglePause(); return; }
+    // Block all typing while paused
+    if (paused) return;
     if (e.key.length > 1 && e.key !== "Backspace") return;
     e.preventDefault();
     if (e.key === "Backspace") {
@@ -689,7 +717,7 @@ export default function DocRacer() {
     const newIdx = charIndex + 1;
     setCharIndex(newIdx);
     if (newIdx >= raceText.length) finishRace();
-  }, [screen, raceFinished, charIndex, raceText, skippedRanges]);
+  }, [screen, raceFinished, charIndex, raceText, skippedRanges, paused, togglePause]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
@@ -698,7 +726,7 @@ export default function DocRacer() {
 
   const finishRace = async () => {
     setRaceFinished(true); clearInterval(timerRef.current);
-    const finalElapsed = (Date.now() - startTime) / 1000;
+    const finalElapsed = (Date.now() - startTime - pausedTimeRef.current) / 1000;
     const typedChars = raceText.length - totalSkipped;
     const finalWpm = Math.round((typedChars / 5) / (finalElapsed / 60)) || 0;
     const finalAcc = typedChars > 0 ? Math.round(((typedChars - totalErrors) / typedChars) * 100) : 100;
@@ -763,12 +791,22 @@ export default function DocRacer() {
       )}
 
       {screen === "race" && (
-        <div>
+        <div style={{ position: "relative" }}>
+          {/* Pause button */}
+          <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 4px 4px" }}>
+            <button onClick={togglePause} style={{
+              ...btnStyle("rgba(255,255,255,0.05)", "rgba(180,190,210,0.5)"),
+              padding: "6px 16px", fontSize: 12, borderRadius: 6,
+            }}>
+              {paused ? "▶ RESUME" : "⏸ PAUSE"} <span style={{ opacity: 0.4, marginLeft: 6, fontSize: 10 }}>ESC</span>
+            </button>
+          </div>
+
           <Racetrack progress={progress} nitroActive={nitroActive} />
           <StatsBar wpm={wpm} accuracy={accuracy} elapsed={elapsed} progress={progress} skippedCount={totalSkipped} />
           <TypingDisplay text={raceText} currentIndex={charIndex} errors={errors}
             skippedRanges={skippedRanges} onSkipToLine={handleSkipTo} />
-          {nitroActive && (
+          {nitroActive && !paused && (
             <div style={{ textAlign: "center", marginTop: 8, fontSize: 12, color: "#f0f", letterSpacing: 4, fontWeight: 700, textShadow: "0 0 10px #f0f", animation: "pulse 0.5s infinite" }}>
               ⚡ NITRO ACTIVE ⚡
             </div>
@@ -776,6 +814,28 @@ export default function DocRacer() {
           <div style={{ textAlign: "center", marginTop: 10, fontSize: 12, color: "rgba(180,190,210,0.25)" }}>
             Section {currentChunkIdx + 1} of {currentDoc?.totalChunks || 1} • Click anywhere to focus
           </div>
+
+          {/* Pause overlay */}
+          {paused && (
+            <div style={{
+              position: "absolute", inset: 0, background: "rgba(8,8,15,0.88)",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              borderRadius: 12, zIndex: 20, backdropFilter: "blur(6px)",
+            }}>
+              <div style={{
+                fontSize: 48, fontWeight: 900, fontFamily: "'Orbitron', sans-serif",
+                color: "#0ff", textShadow: "0 0 30px rgba(0,255,255,0.4)",
+                marginBottom: 12, animation: "pulse 2s infinite",
+              }}>PAUSED</div>
+              <div style={{ fontSize: 13, color: "rgba(180,190,210,0.4)", marginBottom: 28, letterSpacing: 2 }}>
+                Press <span style={{ color: "#0ff", fontWeight: 700 }}>ESC</span> or click below to resume
+              </div>
+              <div style={{ display: "flex", gap: 12 }}>
+                <button onClick={togglePause} style={btnStyle("rgba(0,255,255,0.15)", "#0ff")}>▶ RESUME</button>
+                <button onClick={() => { setPaused(false); setScreen("chunks"); }} style={btnStyle("#222", "rgba(255,51,102,0.6)")}>✕ QUIT</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
