@@ -184,7 +184,7 @@ function Racetrack({progress,nitroActive}){
     </div><div style={{position:"absolute",right:16,top:8,fontSize:20,opacity:0.5}}>🏁</div></div>);
 }
 
-function TypingDisplay({text,currentIndex,errors,skippedRanges,onSkipToLine,darkMode=true}){
+function TypingDisplay({text,currentIndex,errors,skippedRanges,onSkipToLine,darkMode=true,zenMode=false}){
   const containerRef=useRef(null),cursorRef=useRef(null);
   const[hoveredLine,setHoveredLine]=useState(-1),[confirmLine,setConfirmLine]=useState(-1);
   const lines=textToLines(text);
@@ -201,18 +201,19 @@ function TypingDisplay({text,currentIndex,errors,skippedRanges,onSkipToLine,dark
           {isC&&<span style={{position:"absolute",right:4,top:"50%",transform:"translateY(-50%)",fontSize:10,color:"#f0f",background:"rgba(255,0,255,0.15)",border:"1px solid rgba(255,0,255,0.3)",borderRadius:4,padding:"2px 8px",letterSpacing:1,fontWeight:700,zIndex:5,whiteSpace:"nowrap",pointerEvents:"none",animation:"pulse 1s infinite"}}>CLICK AGAIN TO SKIP HERE</span>}
           {isH&&!isC&&<span style={{position:"absolute",right:4,top:"50%",transform:"translateY(-50%)",fontSize:10,color:"rgba(0,255,255,0.5)",letterSpacing:1,fontWeight:600,zIndex:5,whiteSpace:"nowrap",pointerEvents:"none"}}>⏭ SKIP TO LINE</span>}
           {lc.split("").map((char,ci)=>{const gi=line.start+ci,sk=isSkipped(gi),er=errors.has(gi),tp=gi<currentIndex,ic=gi===currentIndex;
-            let col="rgba(180,190,210,0.35)",bg="transparent";if(sk)col="rgba(180,190,210,0.12)";else if(tp&&!er)col="#0ff";else if(tp&&er){col="#ff3366";bg="rgba(255,51,102,0.15)";}if(ic)bg="rgba(0,255,255,0.15)";
+            let col="rgba(180,190,210,0.35)",bg="transparent";if(sk)col="rgba(180,190,210,0.12)";else if(tp&&!er)col="#0ff";else if(tp&&er){col=zenMode?"#0ff":"#ff3366";bg=zenMode?"transparent":"rgba(255,51,102,0.15)";}if(ic)bg="rgba(0,255,255,0.15)";
             return(<span key={ci} ref={ic?cursorRef:null} style={{color:col,background:bg,borderBottom:ic?"2px solid #0ff":"none",transition:"color 0.1s",textShadow:tp&&!er&&!sk?"0 0 8px rgba(0,255,255,0.4)":"none",textDecoration:sk?"line-through":"none",textDecorationColor:"rgba(180,190,210,0.15)"}}>{char}</span>);})}
         </div>);})}
     </div>
     <div style={{display:"flex",gap:16,justifyContent:"center",marginTop:8,flexWrap:"wrap",fontSize:10,color:"rgba(180,190,210,0.3)"}}>
-      <span>🖱️ Click a line ahead to skip</span><span><span style={{color:"#0ff"}}>●</span> Typed</span><span><span style={{color:"#f36"}}>●</span> Error</span><span style={{textDecoration:"line-through",textDecorationColor:"rgba(180,190,210,0.2)"}}>Skipped</span>
+      <span>🖱️ Click a line ahead to skip</span><span><span style={{color:"#0ff"}}>●</span> Typed</span>{!zenMode&&<span><span style={{color:"#f36"}}>●</span> Error</span>}<span style={{textDecoration:"line-through",textDecorationColor:"rgba(180,190,210,0.2)"}}>Skipped</span>
     </div></div>);
 }
 
-function StatsBar({wpm,accuracy,elapsed,progress,skippedCount,showTime=true,T}){
+function StatsBar({wpm,accuracy,elapsed,progress,skippedCount,showTime=true,T,zenMode=false}){
   const fmt=s=>`${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,"0")}`;
-  const stats = [{label:"WPM",value:wpm,color:T.accent},{label:"ACCURACY",value:`${accuracy}%`,color:accuracy>=95?T.success:accuracy>=85?T.warn:T.error},...(showTime?[{label:"TIME",value:fmt(elapsed),color:"#c8f"}]:[]),{label:"PROGRESS",value:`${Math.round(progress*100)}%`,color:"#f90"},...(skippedCount>0?[{label:"SKIPPED",value:skippedCount,color:T.textMuted}]:[])];
+  const accColor = zenMode ? T.accent : (accuracy>=95?T.success:accuracy>=85?T.warn:T.error);
+  const stats = [{label:"WPM",value:wpm,color:T.accent},{label:"ACCURACY",value:`${accuracy}%`,color:accColor},...(showTime?[{label:"TIME",value:fmt(elapsed),color:"#c8f"}]:[]),{label:"PROGRESS",value:`${Math.round(progress*100)}%`,color:"#f90"},...(skippedCount>0?[{label:"SKIPPED",value:skippedCount,color:T.textMuted}]:[])];
   return(<div style={{display:"flex",gap:20,justifyContent:"center",flexWrap:"wrap",padding:"12px 0"}}>
     {stats.map(s=>
       <div key={s.label} style={{textAlign:"center",minWidth:68}}><div style={{fontSize:10,letterSpacing:2,color:T.textMuted,fontWeight:600,marginBottom:3}}>{s.label}</div>
@@ -496,6 +497,7 @@ export default function DocRacer() {
   // Settings
   const [showTime, setShowTime] = useState(true);
   const [darkMode, setDarkMode] = useState(true);
+  const [zenMode, setZenMode] = useState(false); // hides red error highlights
 
   const inputRef = useRef(null);
   const timerRef = useRef(null);
@@ -506,13 +508,14 @@ export default function DocRacer() {
     (async () => {
       try {
         const r = await window.storage.get("docracer-settings");
-        if (r) { const s = JSON.parse(r.value); if (s.showTime !== undefined) setShowTime(s.showTime); if (s.darkMode !== undefined) setDarkMode(s.darkMode); }
+        if (r) { const s = JSON.parse(r.value); if (s.showTime !== undefined) setShowTime(s.showTime); if (s.darkMode !== undefined) setDarkMode(s.darkMode); if (s.zenMode !== undefined) setZenMode(s.zenMode); }
       } catch {}
     })();
   }, []);
-  const saveSettings = async (st, dm) => { try { await window.storage.set("docracer-settings", JSON.stringify({ showTime: st, darkMode: dm })); } catch {} };
-  const toggleShowTime = () => { const v = !showTime; setShowTime(v); saveSettings(v, darkMode); };
-  const toggleDarkMode = () => { const v = !darkMode; setDarkMode(v); saveSettings(showTime, v); };
+  const saveSettings = async (st, dm, zm) => { try { await window.storage.set("docracer-settings", JSON.stringify({ showTime: st, darkMode: dm, zenMode: zm })); } catch {} };
+  const toggleShowTime = () => { const v = !showTime; setShowTime(v); saveSettings(v, darkMode, zenMode); };
+  const toggleDarkMode = () => { const v = !darkMode; setDarkMode(v); saveSettings(showTime, v, zenMode); };
+  const toggleZenMode = () => { const v = !zenMode; setZenMode(v); saveSettings(showTime, darkMode, v); };
 
   // Theme
   const T = darkMode ? {
@@ -714,6 +717,15 @@ export default function DocRacer() {
           }}>
             {darkMode ? "🌙 DARK" : "☀️ LIGHT"}
           </button>
+          <button onClick={toggleZenMode} style={{
+            padding: "4px 12px", fontSize: 11, fontWeight: 600, letterSpacing: 1,
+            background: zenMode ? `${T.success}18` : "transparent",
+            color: zenMode ? T.success : T.textMuted,
+            border: `1px solid ${zenMode ? `${T.success}44` : `${T.textMuted}33`}`,
+            borderRadius: 20, cursor: "pointer", fontFamily: "'JetBrains Mono',monospace", transition: "all 0.2s",
+          }}>
+            {zenMode ? "🧘 ZEN ON" : "🧘 ZEN OFF"}
+          </button>
         </div>
       </div>
 
@@ -737,8 +749,8 @@ export default function DocRacer() {
             </button>
           </div>
           <Racetrack progress={progress} nitroActive={nitroActive} />
-          <StatsBar wpm={wpm} accuracy={accuracy} elapsed={elapsed} progress={progress} skippedCount={totalSkipped} showTime={showTime} T={T} />
-          <TypingDisplay text={raceText} currentIndex={charIndex} errors={errors} skippedRanges={skippedRanges} onSkipToLine={handleSkipTo} darkMode={darkMode} />
+          <StatsBar wpm={wpm} accuracy={accuracy} elapsed={elapsed} progress={progress} skippedCount={totalSkipped} showTime={showTime} T={T} zenMode={zenMode} />
+          <TypingDisplay text={raceText} currentIndex={charIndex} errors={errors} skippedRanges={skippedRanges} onSkipToLine={handleSkipTo} darkMode={darkMode} zenMode={zenMode} />
           {nitroActive && !paused && <div style={{ textAlign: "center", marginTop: 8, fontSize: 12, color: "#f0f", letterSpacing: 4, fontWeight: 700, textShadow: "0 0 10px #f0f", animation: "pulse 0.5s infinite" }}>⚡ NITRO ACTIVE ⚡</div>}
           <div style={{ textAlign: "center", marginTop: 10, fontSize: 12, color: "rgba(180,190,210,0.25)" }}>
             {isReviewRace ? "Review Race" : `Section ${currentChunkIdx + 1} of ${currentDoc?.totalChunks || 1}`} • Click anywhere to focus
